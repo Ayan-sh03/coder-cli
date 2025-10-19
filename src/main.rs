@@ -229,6 +229,30 @@ fn main() {
 
                                 let args: serde_json::Value = serde_json::from_str(tool_args)
                                     .expect("Failed to parse Arguments!");
+
+                                if tools::requires_approval(tool_name) {
+                                    let approval_prompt = tools::format_tool_approval();
+                                    print!("{}", approval_prompt);
+
+                                    match tools::get_user_approval("Proceed") {
+                                        Ok(true) => println!("\u{001b}[92m✓ Approved\u{001b}[0m"),
+                                        Ok(false) => {
+                                            println!("\u{001b}[91m✗ Denied by user\u{001b}[0m");
+                                            // Add denial message to conversation
+                                            messages.push(Message {
+                                                role: "tool".to_string(),
+                                                content: Some("User denied execution".to_string()),
+                                                tool_calls: None,
+                                                tool_call_id: Some(tool_call.id.clone()),
+                                            });
+                                            continue; // Skip this tool
+                                        }
+                                        Err(e) => {
+                                            eprintln!("Error: {}", e);
+                                            continue;
+                                        }
+                                    }
+                                }
                                 let result = match tool_name.as_str() {
                                     "list_dir" => {
                                         let path = args["path"].as_str().unwrap();
