@@ -83,6 +83,23 @@ fn run_openai_inference(input: Option<&str>, messages: &mut Vec<Message>) -> Res
     {
         "type": "function",
         "function": {
+            "name": "run_shell",
+            "description": "Executes a shell command with a 30-second timeout. Dangerous commands like rm, sudo, dd are blocked.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "The shell command to execute"
+                    }
+                },
+                "required": ["command"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "write_file",
             "description": "Writes content to a file. Creates new file if it doesn't exist.",
             "parameters": {
@@ -241,6 +258,11 @@ fn main() {
                                         let content = args["content"].as_str().unwrap();
 
                                         tools::write_file(path, content)
+                                            .unwrap_or_else(|e| format!("Error: {}", e))
+                                    }
+                                    "run_shell" => {
+                                        let command = args["command"].as_str().unwrap();
+                                        tools::run_shell(command)
                                             .unwrap_or_else(|e| format!("Error: {}", e))
                                     }
                                     _ => "Unknown Tool".to_string(),
