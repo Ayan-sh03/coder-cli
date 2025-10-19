@@ -61,7 +61,7 @@ fn run_openai_inference(input: Option<&str>, messages: &mut Vec<Message>) -> Res
             }
         }
     },
-        {
+    {
         "type": "function",
         "function": {
             "name": "read_file",
@@ -77,6 +77,27 @@ fn run_openai_inference(input: Option<&str>, messages: &mut Vec<Message>) -> Res
                     "end_line": { "type": "number", "description": "Ending line (optional, default start+200)" }
                 },
                 "required": ["path"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "description": "Writes content to a file. Creates new file if it doesn't exist.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to the file to write"
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Content to write to the file"
+                    }
+                },
+                "required": ["path", "content"]
             }
         }
     }
@@ -220,7 +241,7 @@ fn main() {
                                         let content = args["content"].as_str().unwrap();
 
                                         tools::write_file(path, content)
-                                            .unwrap_or_else(|e| format! {"Error: {}"}, e)
+                                            .unwrap_or_else(|e| format!("Error: {}", e))
                                     }
                                     _ => "Unknown Tool".to_string(),
                                 };
