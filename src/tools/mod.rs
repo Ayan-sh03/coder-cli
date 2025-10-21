@@ -2,10 +2,11 @@ pub use self::approval::{format_tool_approval, get_user_approval, requires_appro
 pub use self::list_dir::list_dir;
 pub use self::read_file::read_file;
 pub use self::run_shell::run_shell;
+pub use self::search_in_file::search_in_files;
 pub use self::write_file::write_file;
-
 mod approval;
 mod list_dir;
 mod read_file;
 mod run_shell;
+mod search_in_file;
 mod write_file;

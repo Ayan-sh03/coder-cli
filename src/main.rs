@@ -60,8 +60,7 @@ fn run_openai_inference(input: Option<&str>, messages: &mut Vec<Message>) -> Res
                 "required": ["path"]
             }
         }
-    },
-    {
+    },{
         "type": "function",
         "function": {
             "name": "read_file",
@@ -79,8 +78,7 @@ fn run_openai_inference(input: Option<&str>, messages: &mut Vec<Message>) -> Res
                 "required": ["path"]
             }
         }
-    },
-    {
+    },{
         "type": "function",
         "function": {
             "name": "run_shell",
@@ -96,8 +94,7 @@ fn run_openai_inference(input: Option<&str>, messages: &mut Vec<Message>) -> Res
                 "required": ["command"]
             }
         }
-    },
-    {
+    },{
         "type": "function",
         "function": {
             "name": "write_file",
@@ -117,6 +114,21 @@ fn run_openai_inference(input: Option<&str>, messages: &mut Vec<Message>) -> Res
                 "required": ["path", "content"]
             }
         }
+    }, {
+      "type": "function",
+      "function": {
+        "name": "search_in_files",
+        "description": "Search a file or directory tree for a regular-expression pattern; returns file:line:match with git-ignore style filtering.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "pattern": { "type": "string", "description": "Regular-expression pattern (Rust-syntax) to search for" },
+            "path": { "type": "string", "description": "Path to file or directory to search; directory search is recursive" },
+            "case_sensitive": { "type": "boolean", "description": "If false performs case-insensitive matching; default match is case-sensitive" }
+          },
+          "required": ["pattern", "path"]
+        }
+      }
     }
     ]);
     let openai_base_url = env::var("OPENAI_BASE_URL").expect("OPENAI_BASE_URL not set");
@@ -160,9 +172,9 @@ fn run_openai_inference(input: Option<&str>, messages: &mut Vec<Message>) -> Res
 
     messages.push(parsed_message.clone());
 
-    if let Some(content) = &parsed_message.content {
-        println!("{}", content);
-    }
+    // if let Some(content) = &parsed_message.content {
+    //     println!("{}", content);
+    // }
     if let Some(tool_calls) = &parsed_message.tool_calls {
         for tool_call in tool_calls {
             let args: serde_json::Value = serde_json::from_str(&tool_call.function.arguments)
@@ -172,6 +184,14 @@ fn run_openai_inference(input: Option<&str>, messages: &mut Vec<Message>) -> Res
                 "\u{001b}[35m▌🔧 {} ({})\u{001b}[0m",
                 tool_call.function.name, args
             );
+        }
+    }
+
+    if parsed_message.tool_calls.is_none() {
+        if let Some(content) = &parsed_message.content {
+            if !content.trim().is_empty() {
+                println!("{}", content);
+            }
         }
     }
     Ok(())
@@ -287,6 +307,15 @@ fn main() {
                                     "run_shell" => {
                                         let command = args["command"].as_str().unwrap();
                                         tools::run_shell(command)
+                                            .unwrap_or_else(|e| format!("Error: {}", e))
+                                    }
+                                    "search_in_files" => {
+                                        let path = args["path"].as_str().unwrap();
+                                        let case_sensitive =
+                                            args.get("case_sensitive").and_then(|v| v.as_bool());
+                                        let pattern = args["pattern"].as_str().unwrap();
+
+                                        tools::search_in_files(pattern, path, case_sensitive)
                                             .unwrap_or_else(|e| format!("Error: {}", e))
                                     }
                                     _ => "Unknown Tool".to_string(),
