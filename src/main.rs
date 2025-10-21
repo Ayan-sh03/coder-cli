@@ -129,6 +129,35 @@ fn run_openai_inference(input: Option<&str>, messages: &mut Vec<Message>) -> Res
           "required": ["pattern", "path"]
         }
       }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "edit_file",
+        "description": "Edits a file by replacing an existing string with a new string.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "description": "The path to the file to edit."
+            },
+            "old_str": {
+              "type": "string",
+              "description": "The string to be replaced."
+            },
+            "new_str": {
+              "type": "string",
+              "description": "The new string to replace with."
+            }
+          },
+          "required": [
+            "path",
+            "old_str",
+            "new_str"
+          ]
+        }
+      }
     }
     ]);
     let openai_base_url = env::var("OPENAI_BASE_URL").expect("OPENAI_BASE_URL not set");
@@ -316,6 +345,14 @@ fn main() {
                                         let pattern = args["pattern"].as_str().unwrap();
 
                                         tools::search_in_files(pattern, path, case_sensitive)
+                                            .unwrap_or_else(|e| format!("Error: {}", e))
+                                    }
+                                    "edit_file" => {
+                                        let path = args["path"].as_str().unwrap();
+                                        let old_str = args["old_str"].as_str().unwrap();
+                                        let new_str = args["new_str"].as_str().unwrap();
+
+                                        tools::edit_file(path, old_str, new_str)
                                             .unwrap_or_else(|e| format!("Error: {}", e))
                                     }
                                     _ => "Unknown Tool".to_string(),
