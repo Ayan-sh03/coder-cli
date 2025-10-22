@@ -3,7 +3,6 @@ use serde_json::Value;
 use std::env;
 use std::io::{self, Write};
 use tokio::time::{Duration, timeout};
-
 mod tools;
 
 // ------------------ Types compatible with OpenAI-style API ------------------
@@ -187,7 +186,42 @@ impl ToolRegistry {
                         "required": ["path", "old_str", "new_str"]
                     }
                 }
-            }
+            },
+            {
+                    "type": "function",
+                    "function": {
+                        "name": "insert_in_file",
+                        "description": "Insert content before or after a specific anchor (unique string) in a file.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "path": {
+                                    "type": "string",
+                                    "description": "The file path to modify (e.g., 'src/main.py')"
+                                },
+                                "anchor": {
+                                    "type": "string",
+                                    "description": "A unique string that exists in the file to use as insertion point. Should be specific enough not to have duplicates."
+                                },
+                                "content": {
+                                    "type": "string",
+                                    "description": "The content to insert into the file."
+                                },
+                                "position": {
+                                    "type": "string",
+                                    "enum": ["before", "after"],
+                                    "description": "Whether to insert content before or after the anchor."
+                                },
+                                "newline": {
+                                    "type": "boolean",
+                                    "description": "Add newlines around the inserted content. Default: true",
+                                    "default": true
+                                }
+                            },
+                            "required": ["path", "anchor", "content", "position"]
+                        }
+                    }
+                }
         ]);
         Self { schemas }
     }
@@ -206,7 +240,63 @@ struct LlmClient {
     model: String,
     http: reqwest::Client,
 }
+fn display_diff_side_by_side(old_str: &str, new_str: &str) {
+    let old_lines: Vec<&str> = old_str.lines().collect();
+    let new_lines: Vec<&str> = new_str.lines().collect();
 
+    let max_lines = old_lines.len().max(new_lines.len()).min(10);
+
+    // Calculate max width for left column (cap at 50 for readability)
+    let left_width = old_lines.iter().map(|l| l.len()).max().unwrap_or(0).min(50);
+
+    println!("\n\u{001b}[36m╭─ Changes\u{001b}[0m");
+    println!(
+        "\u{001b}[90m│ {:width$} │ \u{001b}[0m",
+        "Before",
+        width = left_width
+    );
+    println!(
+        "\u{001b}[90m│ {:width$} │ After\u{001b}[0m",
+        "",
+        width = left_width
+    );
+    println!(
+        "\u{001b}[36m├─{:─<width$}─┼─\u{001b}[0m",
+        "",
+        width = left_width
+    );
+
+    for i in 0..max_lines {
+        let old_line = old_lines.get(i).unwrap_or(&"");
+        let new_line = new_lines.get(i).unwrap_or(&"");
+
+        // Truncate if too long
+        let old_display = if old_line.len() > left_width {
+            format!("{}...", &old_line[..left_width - 3])
+        } else {
+            old_line.to_string()
+        };
+
+        let new_display = if new_line.len() > 50 {
+            format!("{}...", &new_line[..47])
+        } else {
+            new_line.to_string()
+        };
+
+        println!(
+            "\u{001b}[31m│ {:width$}\u{001b}[0m \u{001b}[90m│\u{001b}[0m \u{001b}[32m{}\u{001b}[0m",
+            old_display,
+            new_display,
+            width = left_width
+        );
+    }
+
+    if old_lines.len() > max_lines || new_lines.len() > max_lines {
+        println!("\u{001b}[90m│ ... (truncated)\u{001b}[0m");
+    }
+
+    println!("\u{001b}[36m╰─\u{001b}[0m");
+}
 impl LlmClient {
     fn new(base_url: String, api_key: String, model: String) -> anyhow::Result<Self> {
         let http = reqwest::Client::builder()
@@ -229,6 +319,7 @@ impl LlmClient {
             "model": self.model,
             "messages": messages,
             "tools": tools,
+            "stream":true
             // "tool_choice": "auto", // optional, if your provider supports it
         });
 
@@ -239,19 +330,111 @@ impl LlmClient {
             .json(&req)
             .send()
             .await?;
-        let status = resp.status();
-        let body: Value = resp.json().await?;
-        if !status.is_success() {
-            anyhow::bail!(
-                "LLM error ({}): {}",
-                status,
-                body.get("error").unwrap_or(&body)
-            );
+
+        // Replace the response parsing in chat_once:
+        let mut stream = resp.bytes_stream();
+        let mut accumulated_message = Message {
+            role: "assistant".to_string(),
+            content: Some(String::new()),
+            tool_calls: None,
+            tool_call_id: None,
+        };
+        let mut tool_calls_map: std::collections::HashMap<usize, ToolCall> =
+            std::collections::HashMap::new();
+
+        use futures::StreamExt;
+
+        while let Some(chunk) = stream.next().await {
+            let bytes = chunk?;
+            let text = String::from_utf8_lossy(&bytes);
+
+            let mut should_stop = false; // ← add this flag
+
+            for line in text.lines() {
+                if !line.starts_with("data: ") {
+                    continue;
+                }
+                let json_str = line.strip_prefix("data: ").unwrap().trim();
+                if json_str == "[DONE]" || json_str == "" {
+                    should_stop = true; // ← set flag instead of break
+                    break;
+                }
+
+                let delta: Value = serde_json::from_str(json_str)?;
+                let choice = &delta["choices"][0];
+                let delta_obj = &choice["delta"];
+
+                if let Some(finish) = choice["finish_reason"].as_str() {
+                    if finish == "stop" || finish == "tool_calls" {
+                        should_stop = true; // ← set flag
+                        break;
+                    }
+                }
+
+                // Accumulate content
+                if let Some(content) = delta_obj["content"].as_str() {
+                    print!("{}", content);
+                    io::stdout().flush().unwrap();
+                    accumulated_message
+                        .content
+                        .as_mut()
+                        .unwrap()
+                        .push_str(content);
+                }
+
+                // Accumulate tool_calls (indexed deltas)
+                if let Some(tool_calls_arr) = delta_obj["tool_calls"].as_array() {
+                    for tc_delta in tool_calls_arr {
+                        let index = tc_delta["index"].as_u64().unwrap() as usize;
+                        let entry = tool_calls_map.entry(index).or_insert_with(|| ToolCall {
+                            id: String::new(),
+                            call_type: "function".to_string(),
+                            function: FunctionCall {
+                                name: String::new(),
+                                arguments: String::new(),
+                            },
+                        });
+
+                        if let Some(id) = tc_delta["id"].as_str() {
+                            entry.id = id.to_string();
+                        }
+                        if let Some(name) = tc_delta["function"]["name"].as_str() {
+                            entry.function.name = name.to_string();
+                        }
+                        if let Some(args) = tc_delta["function"]["arguments"].as_str() {
+                            entry.function.arguments.push_str(args);
+                        }
+                    }
+                }
+            }
+
+            if should_stop {
+                // ← break outer loop
+                break;
+            }
         }
 
-        let msg_val = &body["choices"][0]["message"];
-        let parsed: Message = serde_json::from_value(msg_val.clone())?;
-        Ok(parsed)
+        // Reconstruct tool_calls vector from map if any
+        if !tool_calls_map.is_empty() {
+            let mut calls: Vec<_> = tool_calls_map.into_iter().collect();
+            calls.sort_by_key(|(idx, _)| *idx);
+            accumulated_message.tool_calls = Some(calls.into_iter().map(|(_, tc)| tc).collect());
+        }
+
+        Ok(accumulated_message)
+        // let status = resp.status();
+        // let body: Value = resp.json().await?;
+        // if !status.is_success() {
+        //     anyhow::bail!(
+        //         "LLM error ({}): {}",
+        //         status,
+        //         body.get("error").unwrap_or(&body)
+        //     );
+        // }
+
+        // let msg_val = &body["choices"][0]["message"];
+        // let parsed: Message = serde_json::from_value(msg_val.clone())?;
+        // Ok(parsed)
     }
 }
 
@@ -306,17 +489,32 @@ impl Agent {
 
         // Record assistant step
         messages.push(llm_step.clone());
+
         if let Some(tcs) = &llm_step.tool_calls {
             for tc in tcs {
-                let pretty_args = serde_json::from_str::<serde_json::Value>(&tc.function.arguments)
-                    .ok()
-                    .and_then(|v| serde_json::to_string(&v).ok())
-                    .unwrap_or_else(|| tc.function.arguments.clone());
+                let args: serde_json::Value =
+                    serde_json::from_str(&tc.function.arguments).unwrap_or(serde_json::json!({}));
 
-                println!(
-                    "\u{001b}[35m▌🔧 {} ({})\u{001b}[0m",
-                    tc.function.name, pretty_args
-                );
+                println!("\n\u{001b}[35m▌🔧 {}\u{001b}[0m", tc.function.name);
+
+                // Special handling for edit_file
+                if tc.function.name == "edit_file" {
+                    if let (Some(old_str), Some(new_str)) = (
+                        args.get("old_str").and_then(|v| v.as_str()),
+                        args.get("new_str").and_then(|v| v.as_str()),
+                    ) {
+                        display_diff_side_by_side(old_str, new_str);
+
+                        if let Some(path) = args.get("path").and_then(|v| v.as_str()) {
+                            println!("\u{001b}[90m   Path: {}\u{001b}[0m", path);
+                        }
+                    }
+                } else {
+                    // For other tools, show pretty JSON
+                    let pretty_args = serde_json::to_string_pretty(&args)
+                        .unwrap_or_else(|_| tc.function.arguments.clone());
+                    println!("\u{001b}[90m{}\u{001b}[0m", pretty_args);
+                }
             }
         }
 
@@ -426,6 +624,14 @@ impl Agent {
                         let new_str = args["new_str"].as_str().unwrap_or("");
                         tools::edit_file(path, old_str, new_str)
                             .unwrap_or_else(|e| format!("Error: {}", e))
+                    }
+                    "insert_in_file"=>{
+                        let path = args["path"].as_str().unwrap_or(".");
+                        let content = args["content"].as_str().unwrap_or("");
+                        let anchor = args["anchor"].as_str().unwrap_or("");
+                        let position = args["position"].as_str().unwrap_or("");
+
+                        tools::insert_in_file(path, anchor, content, position).unwrap_or_else(|e| format!("Error: {}",e))
                     }
                     _ => "Error: unknown tool".to_string(),
                 };
@@ -564,6 +770,7 @@ async fn main() -> anyhow::Result<()> {
         let trimmed = input.trim();
         if trimmed.eq_ignore_ascii_case("quit") {
             println!("Goodbye!");
+            println!("Trace: {:?}", messages);
             break;
         } else if trimmed.eq_ignore_ascii_case("help") {
             println!("Type a task. Type 'quit' to exit.");

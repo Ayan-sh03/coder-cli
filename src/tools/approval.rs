@@ -1,7 +1,7 @@
 use std::io::{self, Write};
 
 /// Categories of tools by risk level
-const DESTRUCTIVE_TOOLS: &[&str] = &["write_file", "run_shell", "edit_file"];
+const DESTRUCTIVE_TOOLS: &[&str] = &["write_file", "run_shell", "edit_file", "insert_in_file"];
 // const SAFE_TOOLS: &[&str] = &["list_dir", "read_file"];
 
 /// Get user approval with colored output

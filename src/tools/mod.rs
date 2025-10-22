@@ -1,5 +1,6 @@
 pub use self::approval::{format_tool_approval, get_user_approval, requires_approval};
 pub use self::edit_file::edit_file;
+pub use self::insert_in_file::insert_in_file;
 pub use self::list_dir::list_dir;
 pub use self::read_file::read_file;
 pub use self::run_shell::run_shell;
@@ -7,6 +8,7 @@ pub use self::search_in_file::search_in_files;
 pub use self::write_file::write_file;
 mod approval;
 mod edit_file;
+mod insert_in_file;
 mod list_dir;
 mod read_file;
 mod run_shell;
