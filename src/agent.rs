@@ -6,6 +6,20 @@ use crate::utils::{clip, display_diff_side_by_side};
 use serde_json::Value;
 use std::io::{self, Write};
 use tokio::time::{Duration, timeout};
+use async_trait::async_trait;
+
+#[async_trait]
+pub trait LlmClientTrait {
+    async fn chat_once(&self, messages: &[Message], tools: &Value) -> anyhow::Result<Message>;
+}
+
+// Implement the trait for the real LlmClient
+#[async_trait]
+impl LlmClientTrait for LlmClient {
+    async fn chat_once(&self, messages: &[Message], tools: &Value) -> anyhow::Result<Message> {
+        self.chat_once(messages, tools).await
+    }
+}
 
 #[derive(Clone)]
 pub struct AgentOptions {
@@ -16,20 +30,29 @@ pub struct AgentOptions {
 }
 
 pub struct Agent {
-    llm: LlmClient,
+    llm: Box<dyn LlmClientTrait + Send + Sync>,
     tools: ToolRegistry,
     opts: AgentOptions,
 }
 
 impl Agent {
-    pub fn new(llm: LlmClient, tools: ToolRegistry, opts: AgentOptions) -> Self {
+    pub fn new(llm: Box<dyn LlmClientTrait + Send + Sync>, tools: ToolRegistry, opts: AgentOptions) -> Self {
         Self { llm, tools, opts }
+    }
+    
+    // Convenience constructor for real LlmClient
+    pub fn with_real_client(llm: LlmClient, tools: ToolRegistry, opts: AgentOptions) -> Self {
+        Self {
+            llm: Box::new(llm),
+            tools,
+            opts,
+        }
     }
 
     // Compact older messages to keep context light. We do a simple heuristic:
     // - Keep the last N messages untouched.
     // - For older "tool" messages, clip content to a budget.
-    fn compact_history(&self, session: &mut Session) {
+    pub fn compact_history(&self, session: &mut Session) {
         // Example heuristic: clip any tool message content longer than budget.
         for m in session.messages.iter_mut() {
             if m.role == "tool" {

@@ -42,7 +42,7 @@ async fn main() -> anyhow::Result<()> {
         step_timeout: tokio::time::Duration::from_secs(45),
         observation_clip: 4000, // keep large enough for code blocks
     };
-    let agent = Agent::new(llm, tools, opts);
+    let agent = Agent::with_real_client(llm, tools, opts);
 
     // Create session with system message
     let mut session = Session::new(Some("Coding Session"), Some(&model));

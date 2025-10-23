@@ -86,9 +86,9 @@ impl MockLlmClient {
     }
 }
 
-#[async_trait]
-impl LlmClientTrait for MockLlmClient {
-    async fn chat_once(&self, messages: &[Message], _tools: &Value) -> Result<Message> {
+// Implement the same interface as real LlmClient for Agent
+impl MockLlmClient {
+    pub async fn chat_once(&self, messages: &[Message], tools: &Value) -> Result<Message> {
         // Store the call for verification
         self.call_history.lock().unwrap().push(messages.to_vec());
         
@@ -98,9 +98,9 @@ impl LlmClientTrait for MockLlmClient {
     }
 }
 
-// Implement the same interface as real LlmClient for Agent
-impl MockLlmClient {
-    pub async fn chat_once(&self, messages: &[Message], tools: &Value) -> Result<Message> {
-        <Self as LlmClientTrait>::chat_once(self, messages, tools).await
+#[async_trait]
+impl crate::agent::LlmClientTrait for MockLlmClient {
+    async fn chat_once(&self, messages: &[Message], tools: &Value) -> Result<Message> {
+        self.chat_once(messages, tools).await
     }
 }
