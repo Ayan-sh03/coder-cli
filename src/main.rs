@@ -5,6 +5,11 @@ mod tool_registry;
 mod tools;
 mod types;
 mod utils;
+
+#[cfg(test)]
+mod mocks;
+#[cfg(test)]
+mod tests;
 use agent::{Agent, AgentOptions};
 use llm_client::LlmClient;
 use session::Session;
