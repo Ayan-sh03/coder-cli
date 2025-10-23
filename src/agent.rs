@@ -1,6 +1,7 @@
-use crate::types::Message;
-use crate::tool_registry::ToolRegistry;
 use crate::llm_client::LlmClient;
+use crate::session::Session;
+use crate::tool_registry::ToolRegistry;
+use crate::types::Message;
 use crate::utils::{clip, display_diff_side_by_side};
 use serde_json::Value;
 use std::io::{self, Write};
@@ -28,9 +29,9 @@ impl Agent {
     // Compact older messages to keep context light. We do a simple heuristic:
     // - Keep the last N messages untouched.
     // - For older "tool" messages, clip content to a budget.
-    fn compact_history(&self, msgs: &mut Vec<Message>) {
+    fn compact_history(&self, session: &mut Session) {
         // Example heuristic: clip any tool message content longer than budget.
-        for m in msgs.iter_mut() {
+        for m in session.messages.iter_mut() {
             if m.role == "tool" {
                 if let Some(c) = &m.content {
                     if c.len() > self.opts.observation_clip {
@@ -43,27 +44,33 @@ impl Agent {
         // You can also drop very old messages if they exceed some count/size.
     }
 
-    pub async fn run_turn(&self, messages: &mut Vec<Message>) -> anyhow::Result<Option<String>> {
-        self.compact_history(messages);
+    pub async fn run_turn(&self, session: &mut Session) -> anyhow::Result<Option<String>> {
+        self.compact_history(session);
 
         // Single LLM step
         let llm_step = timeout(
             self.opts.step_timeout,
-            self.llm.chat_once(messages, self.tools.schemas()),
+            self.llm.chat_once(&session.messages, self.tools.schemas()),
         )
         .await??;
 
         // Record assistant step
-        messages.push(llm_step.clone());
+        session.add_message(llm_step.clone());
 
         if let Some(tcs) = &llm_step.tool_calls {
             for tc in tcs {
                 let args: serde_json::Value = match serde_json::from_str(&tc.function.arguments) {
                     Ok(v) => v,
                     Err(e) => {
-                        let error_msg = format!("Failed to parse tool arguments for '{}': {}. Raw arguments: {}", tc.function.name, e, tc.function.arguments);
-                        eprintln!("\u{001b}[91mWarning:\u{001b}[0m {}", error_msg);
-                        return Err(anyhow::anyhow!("Tool argument parsing failed: {}", error_msg));
+                        let error_msg = format!(
+                            "Failed to parse tool arguments for '{}': {}. Raw arguments: {}",
+                            tc.function.name, e, tc.function.arguments
+                        );
+                        // eprintln!("\u{001b}[91mWarning:\u{001b}[0m {}", error_msg);
+                        return Err(anyhow::anyhow!(
+                            "Tool argument parsing failed: {}",
+                            error_msg
+                        ));
                     }
                 };
 
@@ -143,7 +150,10 @@ impl Agent {
                 let args: Value = match serde_json::from_str(&args_raw) {
                     Ok(v) => v,
                     Err(e) => {
-                        let error_msg = format!("JSON parsing error for tool '{}': {}. Arguments received: {}", name, e, args_raw);
+                        let error_msg = format!(
+                            "JSON parsing error for tool '{}': {}. Arguments received: {}",
+                            name, e, args_raw
+                        );
                         eprintln!("\u{001b}[91mError:\u{001b}[0m {}", error_msg);
                         return Ok::<(String, String), anyhow::Error>((
                             id,
@@ -179,7 +189,8 @@ impl Agent {
                     "write_file" => {
                         let path = args["path"].as_str().unwrap_or("");
                         let content = args["content"].as_str().unwrap_or("");
-                        crate::tools::write_file(path, content).unwrap_or_else(|e| format!("Error: {}", e))
+                        crate::tools::write_file(path, content)
+                            .unwrap_or_else(|e| format!("Error: {}", e))
                     }
                     "run_shell" => {
                         let cmd = args["command"].as_str().unwrap_or("");
@@ -221,7 +232,7 @@ impl Agent {
                 Ok(Ok((tool_call_id, observation))) => {
                     // Clip observation to keep context small
                     let clipped = clip(&observation, self.opts.observation_clip);
-                    messages.push(Message {
+                    session.add_message(Message {
                         role: "tool".to_string(),
                         content: Some(clipped),
                         tool_calls: None,
@@ -229,7 +240,7 @@ impl Agent {
                     });
                 }
                 Ok(Err(e)) => {
-                    messages.push(Message {
+                    session.add_message(Message {
                         role: "tool".to_string(),
                         content: Some(format!("Error: {}", e)),
                         tool_calls: None,
@@ -237,7 +248,7 @@ impl Agent {
                     });
                 }
                 Err(join_err) => {
-                    messages.push(Message {
+                    session.add_message(Message {
                         role: "tool".to_string(),
                         content: Some(format!("Join error: {}", join_err)),
                         tool_calls: None,
@@ -255,10 +266,10 @@ impl Agent {
     pub async fn run_agent_loop(
         &self,
         initial_user_input: String,
-        messages: &mut Vec<Message>,
+        session: &mut Session,
     ) -> anyhow::Result<()> {
         // Seed with user input
-        messages.push(Message {
+        session.add_message(Message {
             role: "user".into(),
             content: Some(initial_user_input),
             tool_calls: None,
@@ -266,7 +277,7 @@ impl Agent {
         });
 
         for step in 0..self.opts.max_steps {
-            let final_text = self.run_turn(messages).await?;
+            let final_text = self.run_turn(session).await?;
             if let Some(_output) = final_text {
                 return Ok(());
             }

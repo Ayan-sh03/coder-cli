@@ -1,12 +1,13 @@
 mod agent;
 mod llm_client;
+mod session;
 mod tool_registry;
 mod tools;
 mod types;
 mod utils;
-
 use agent::{Agent, AgentOptions};
 use llm_client::LlmClient;
+use session::Session;
 use std::env;
 use std::io::{self, Write};
 use tool_registry::ToolRegistry;
@@ -28,7 +29,7 @@ async fn main() -> anyhow::Result<()> {
         "glm-4.5-air".to_string()
     });
 
-    let llm = LlmClient::new(base_url, api_key, model)?;
+    let llm = LlmClient::new(base_url, api_key, model.clone())?;
     let tools = ToolRegistry::new();
     let opts = AgentOptions {
         max_steps: 12,
@@ -38,7 +39,9 @@ async fn main() -> anyhow::Result<()> {
     };
     let agent = Agent::new(llm, tools, opts);
 
-    let mut messages: Vec<Message> = vec![Message {
+    // Create session with system message
+    let mut session = Session::new(Some("Coding Session"), Some(&model));
+    session.add_message(Message {
         role: "system".to_string(),
         content: Some(
             "You are an advanced coding assistant with expert-level reasoning capabilities.
@@ -83,7 +86,7 @@ async fn main() -> anyhow::Result<()> {
         ),
         tool_calls: None,
         tool_call_id: None,
-    }];
+    });
 
     loop {
         print!("\u{001b}[93mYou:\u{001b}[0m ");
@@ -98,7 +101,8 @@ async fn main() -> anyhow::Result<()> {
         let trimmed = input.trim();
         if trimmed.eq_ignore_ascii_case("quit") {
             println!("Goodbye!");
-            println!("Trace: {:?}", messages);
+            println!("Session ID: {}", session.id);
+            println!("Total messages: {}", session.messages.len());
             break;
         } else if trimmed.eq_ignore_ascii_case("help") {
             println!("Type a task. Type 'quit' to exit.");
@@ -109,7 +113,7 @@ async fn main() -> anyhow::Result<()> {
         io::stdout().flush().unwrap();
 
         if let Err(e) = agent
-            .run_agent_loop(trimmed.to_string(), &mut messages)
+            .run_agent_loop(trimmed.to_string(), &mut session)
             .await
         {
             eprintln!("\n\u{001b}[91mError:\u{001b}[0m {}", e);

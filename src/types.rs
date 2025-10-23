@@ -1,5 +1,5 @@
+use chrono::{self, Utc};
 use serde::{Deserialize, Serialize};
-
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ToolCall {
     pub id: String,
@@ -23,4 +23,14 @@ pub struct Message {
     pub tool_calls: Option<Vec<ToolCall>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct Session {
+    pub id: String,
+    pub messages: Vec<Message>,
+    pub created_at: chrono::DateTime<Utc>,
+    pub updated_at: chrono::DateTime<Utc>,
+    pub title: Option<String>,
+    pub model: Option<String>,
 }
