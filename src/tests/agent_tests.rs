@@ -1,4 +1,4 @@
-use crate::agent::{Agent, AgentOptions, LlmClientTrait};
+use crate::agent::{Agent, AgentOptions};
 use crate::mocks::mock_llm_client::MockLlmClient;
 use crate::session::Session;
 use crate::tool_registry::ToolRegistry;

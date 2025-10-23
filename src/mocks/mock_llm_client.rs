@@ -88,7 +88,7 @@ impl MockLlmClient {
 
 // Implement the same interface as real LlmClient for Agent
 impl MockLlmClient {
-    pub async fn chat_once(&self, messages: &[Message], tools: &Value) -> Result<Message> {
+    pub async fn chat_once(&self, messages: &[Message], _tools: &Value) -> Result<Message> {
         // Store the call for verification
         self.call_history.lock().unwrap().push(messages.to_vec());
         
