@@ -1,4 +1,4 @@
-use crate::types::{Message, ToolCall, FunctionCall};
+use crate::types::{FunctionCall, Message, ToolCall};
 use serde_json::Value;
 use std::io::{self, Write};
 use tokio::time::Duration;
@@ -77,7 +77,10 @@ impl LlmClient {
                 let delta: Value = match serde_json::from_str(json_str) {
                     Ok(v) => v,
                     Err(e) => {
-                        eprintln!("Warning: Failed to parse JSON chunk: '{}'. Error: {}", json_str, e);
+                        eprintln!(
+                            "Warning: Failed to parse JSON chunk: '{}'. Error: {}",
+                            json_str, e
+                        );
                         continue; // Skip malformed JSON and continue processing
                     }
                 };
@@ -143,4 +146,58 @@ impl LlmClient {
 
         Ok(accumulated_message)
     }
+
+    pub async fn chat_once_no_stream(&self, messages: &[Message], tools: &Value) -> anyhow::Result<Message> {
+        let url = format!("{}/chat/completions", self.base_url);
+        let req = serde_json::json!({
+            "model": self.model,
+            "messages": messages,
+            "tools": tools,
+            "stream": false
+            // "tool_choice": "auto", // optional, if your provider supports it
+        });
+
+        let resp = self
+            .http
+            .post(url)
+            .bearer_auth(&self.api_key)
+            .json(&req)
+            .send()
+            .await?;
+
+        // Parse non-streaming response
+        let response_text = resp.text().await?;
+        let response_json: Value = serde_json::from_str(&response_text)
+            .map_err(|e| anyhow::anyhow!("Failed to parse JSON response: {}", e))?;
+
+        // Extract the message from the response
+        let choice = response_json["choices"]
+            .as_array()
+            .and_then(|choices| choices.first())
+            .ok_or_else(|| anyhow::anyhow!("No choices in response"))?;
+
+        let message = &choice["message"];
+        
+        // Parse tool calls if present
+        let tool_calls = if let Some(tool_calls_array) = message["tool_calls"].as_array() {
+            Some(tool_calls_array.iter().map(|tc| ToolCall {
+                id: tc["id"].as_str().unwrap_or("").to_string(),
+                call_type: tc["type"].as_str().unwrap_or("function").to_string(),
+                function: FunctionCall {
+                    name: tc["function"]["name"].as_str().unwrap_or("").to_string(),
+                    arguments: tc["function"]["arguments"].as_str().unwrap_or("").to_string(),
+                },
+            }).collect())
+        } else {
+            None
+        };
+
+        Ok(Message {
+            role: message["role"].as_str().unwrap_or("assistant").to_string(),
+            content: message["content"].as_str().map(|s| s.to_string()),
+            tool_calls,
+            tool_call_id: None,
+        })
+    }
 }
+
