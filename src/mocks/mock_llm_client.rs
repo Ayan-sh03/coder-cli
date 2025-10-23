@@ -103,4 +103,10 @@ impl crate::agent::LlmClientTrait for MockLlmClient {
     async fn chat_once(&self, messages: &[Message], tools: &Value) -> Result<Message> {
         self.chat_once(messages, tools).await
     }
+    
+    async fn chat_once_no_stream(&self, _messages: &[Message], _tools: &Value) -> Result<Message> {
+        // For mock, just return the next configured response
+        self.pop_response()
+            .ok_or_else(|| anyhow::anyhow!("No mock response available"))
+    }
 }

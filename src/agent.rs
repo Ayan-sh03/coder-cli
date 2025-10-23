@@ -3,21 +3,26 @@ use crate::session::Session;
 use crate::tool_registry::ToolRegistry;
 use crate::types::Message;
 use crate::utils::{clip, display_diff_side_by_side};
+use async_trait::async_trait;
 use serde_json::Value;
 use std::io::{self, Write};
 use tokio::time::{Duration, timeout};
-use async_trait::async_trait;
 
 #[async_trait]
 pub trait LlmClientTrait {
     async fn chat_once(&self, messages: &[Message], tools: &Value) -> anyhow::Result<Message>;
+    async fn chat_once_no_stream(&self, messages: &[Message], tools: &Value) -> anyhow::Result<Message>;
 }
 
-// Implement the trait for the real LlmClient
+// Implement trait for real LlmClient
 #[async_trait]
 impl LlmClientTrait for LlmClient {
     async fn chat_once(&self, messages: &[Message], tools: &Value) -> anyhow::Result<Message> {
         self.chat_once(messages, tools).await
+    }
+    
+    async fn chat_once_no_stream(&self, messages: &[Message], tools: &Value) -> anyhow::Result<Message> {
+        self.chat_once_no_stream(messages, tools).await
     }
 }
 
@@ -36,10 +41,14 @@ pub struct Agent {
 }
 
 impl Agent {
-    pub fn new(llm: Box<dyn LlmClientTrait + Send + Sync>, tools: ToolRegistry, opts: AgentOptions) -> Self {
+    pub fn new(
+        llm: Box<dyn LlmClientTrait + Send + Sync>,
+        tools: ToolRegistry,
+        opts: AgentOptions,
+    ) -> Self {
         Self { llm, tools, opts }
     }
-    
+
     // Convenience constructor for real LlmClient
     pub fn with_real_client(llm: LlmClient, tools: ToolRegistry, opts: AgentOptions) -> Self {
         Self {
@@ -240,6 +249,11 @@ impl Agent {
                         let position = args["position"].as_str().unwrap_or("");
 
                         crate::tools::insert_in_file(path, anchor, content, position)
+                            .unwrap_or_else(|e| format!("Error: {}", e))
+                    }
+                    "ask_orackle" => {
+                        let query = args["query"].as_str().unwrap_or("");
+                        crate::tools::ask_orackle(query)
                             .unwrap_or_else(|e| format!("Error: {}", e))
                     }
                     _ => "Error: unknown tool".to_string(),

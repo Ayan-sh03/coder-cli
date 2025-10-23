@@ -154,40 +154,57 @@ impl ToolRegistry {
                 }
             },
             {
-                    "type": "function",
-                    "function": {
-                        "name": "insert_in_file",
-                        "description": "Insert content before or after a specific anchor (unique string) in a file.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "path": {
-                                    "type": "string",
-                                    "description": "The file path to modify (e.g., 'src/main.py')"
-                                },
-                                "anchor": {
-                                    "type": "string",
-                                    "description": "A unique string that exists in the file to use as insertion point. Should be specific enough not to have duplicates."
-                                },
-                                "content": {
-                                    "type": "string",
-                                    "description": "The content to insert into the file."
-                                },
-                                "position": {
-                                    "type": "string",
-                                    "enum": ["before", "after"],
-                                    "description": "Whether to insert content before or after the anchor."
-                                },
-                                "newline": {
-                                    "type": "boolean",
-                                    "description": "Add newlines around the inserted content. Default: true",
-                                    "default": true
-                                }
+                "type": "function",
+                "function": {
+                    "name": "insert_in_file",
+                    "description": "Insert content before or after a specific anchor (unique string) in a file.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "path": {
+                                "type": "string",
+                                "description": "The file path to modify (e.g., 'src/main.py')"
                             },
-                            "required": ["path", "anchor", "content", "position"]
-                        }
+                            "anchor": {
+                                "type": "string",
+                                "description": "A unique string that exists in the file to use as insertion point. Should be specific enough not to have duplicates."
+                            },
+                            "content": {
+                                "type": "string",
+                                "description": "The content to insert into the file."
+                            },
+                            "position": {
+                                "type": "string",
+                                "enum": ["before", "after"],
+                                "description": "Whether to insert content before or after the anchor."
+                            },
+                            "newline": {
+                                "type": "boolean",
+                                "description": "Add newlines around the inserted content. Default: true",
+                                "default": true
+                            }
+                        },
+                        "required": ["path", "anchor", "content", "position"]
                     }
                 }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "ask_orackle",
+                    "description": "Ask Orackle for insights when stuck with complex problems. Orackle is a read-only expert agent that provides strategic guidance and alternative approaches.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "Detailed description of the problem or situation where the main agent is stuck"
+                            }
+                        },
+                        "required": ["query"]
+                    }
+                }
+            }
         ]);
         Self { schemas }
     }

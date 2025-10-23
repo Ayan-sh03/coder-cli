@@ -147,7 +147,11 @@ impl LlmClient {
         Ok(accumulated_message)
     }
 
-    pub async fn chat_once_no_stream(&self, messages: &[Message], tools: &Value) -> anyhow::Result<Message> {
+    pub async fn chat_once_no_stream(
+        &self,
+        messages: &[Message],
+        tools: &Value,
+    ) -> anyhow::Result<Message> {
         let url = format!("{}/chat/completions", self.base_url);
         let req = serde_json::json!({
             "model": self.model,
@@ -177,17 +181,25 @@ impl LlmClient {
             .ok_or_else(|| anyhow::anyhow!("No choices in response"))?;
 
         let message = &choice["message"];
-        
+
         // Parse tool calls if present
         let tool_calls = if let Some(tool_calls_array) = message["tool_calls"].as_array() {
-            Some(tool_calls_array.iter().map(|tc| ToolCall {
-                id: tc["id"].as_str().unwrap_or("").to_string(),
-                call_type: tc["type"].as_str().unwrap_or("function").to_string(),
-                function: FunctionCall {
-                    name: tc["function"]["name"].as_str().unwrap_or("").to_string(),
-                    arguments: tc["function"]["arguments"].as_str().unwrap_or("").to_string(),
-                },
-            }).collect())
+            Some(
+                tool_calls_array
+                    .iter()
+                    .map(|tc| ToolCall {
+                        id: tc["id"].as_str().unwrap_or("").to_string(),
+                        call_type: tc["type"].as_str().unwrap_or("function").to_string(),
+                        function: FunctionCall {
+                            name: tc["function"]["name"].as_str().unwrap_or("").to_string(),
+                            arguments: tc["function"]["arguments"]
+                                .as_str()
+                                .unwrap_or("")
+                                .to_string(),
+                        },
+                    })
+                    .collect(),
+            )
         } else {
             None
         };
@@ -200,4 +212,3 @@ impl LlmClient {
         })
     }
 }
-
