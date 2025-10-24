@@ -11,7 +11,11 @@ use tokio::time::{Duration, timeout};
 #[async_trait]
 pub trait LlmClientTrait {
     async fn chat_once(&self, messages: &[Message], tools: &Value) -> anyhow::Result<Message>;
-    async fn chat_once_no_stream(&self, messages: &[Message], tools: &Value) -> anyhow::Result<Message>;
+    async fn chat_once_no_stream(
+        &self,
+        messages: &[Message],
+        // tools: &Value,
+    ) -> anyhow::Result<Message>;
 }
 
 // Implement trait for real LlmClient
@@ -20,9 +24,9 @@ impl LlmClientTrait for LlmClient {
     async fn chat_once(&self, messages: &[Message], tools: &Value) -> anyhow::Result<Message> {
         self.chat_once(messages, tools).await
     }
-    
-    async fn chat_once_no_stream(&self, messages: &[Message], tools: &Value) -> anyhow::Result<Message> {
-        self.chat_once_no_stream(messages, tools).await
+
+    async fn chat_once_no_stream(&self, messages: &[Message]) -> anyhow::Result<Message> {
+        self.chat_once_no_stream(messages).await
     }
 }
 
@@ -254,6 +258,7 @@ impl Agent {
                     "ask_orackle" => {
                         let query = args["query"].as_str().unwrap_or("");
                         crate::tools::ask_orackle(query)
+                            .await
                             .unwrap_or_else(|e| format!("Error: {}", e))
                     }
                     _ => "Error: unknown tool".to_string(),

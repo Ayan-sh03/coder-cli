@@ -150,13 +150,13 @@ impl LlmClient {
     pub async fn chat_once_no_stream(
         &self,
         messages: &[Message],
-        tools: &Value,
+        // tools: &Value,
     ) -> anyhow::Result<Message> {
         let url = format!("{}/chat/completions", self.base_url);
         let req = serde_json::json!({
             "model": self.model,
             "messages": messages,
-            "tools": tools,
+            // "tools": tools,
             "stream": false
             // "tool_choice": "auto", // optional, if your provider supports it
         });
@@ -182,32 +182,32 @@ impl LlmClient {
 
         let message = &choice["message"];
 
-        // Parse tool calls if present
-        let tool_calls = if let Some(tool_calls_array) = message["tool_calls"].as_array() {
-            Some(
-                tool_calls_array
-                    .iter()
-                    .map(|tc| ToolCall {
-                        id: tc["id"].as_str().unwrap_or("").to_string(),
-                        call_type: tc["type"].as_str().unwrap_or("function").to_string(),
-                        function: FunctionCall {
-                            name: tc["function"]["name"].as_str().unwrap_or("").to_string(),
-                            arguments: tc["function"]["arguments"]
-                                .as_str()
-                                .unwrap_or("")
-                                .to_string(),
-                        },
-                    })
-                    .collect(),
-            )
-        } else {
-            None
-        };
+        // // Parse tool calls if present
+        // let tool_calls = if let Some(tool_calls_array) = message["tool_calls"].as_array() {
+        //     Some(
+        //         tool_calls_array
+        //             .iter()
+        //             .map(|tc| ToolCall {
+        //                 id: tc["id"].as_str().unwrap_or("").to_string(),
+        //                 call_type: tc["type"].as_str().unwrap_or("function").to_string(),
+        //                 function: FunctionCall {
+        //                     name: tc["function"]["name"].as_str().unwrap_or("").to_string(),
+        //                     arguments: tc["function"]["arguments"]
+        //                         .as_str()
+        //                         .unwrap_or("")
+        //                         .to_string(),
+        //                 },
+        //             })
+        //             .collect(),
+        //     )
+        // } else {
+        //     None
+        // };
 
         Ok(Message {
             role: message["role"].as_str().unwrap_or("assistant").to_string(),
             content: message["content"].as_str().map(|s| s.to_string()),
-            tool_calls,
+            tool_calls: None,
             tool_call_id: None,
         })
     }

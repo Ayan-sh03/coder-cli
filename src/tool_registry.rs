@@ -192,7 +192,7 @@ impl ToolRegistry {
                 "type": "function",
                 "function": {
                     "name": "ask_orackle",
-                    "description": "Ask Orackle for insights when stuck with complex problems. Orackle is a read-only expert agent that provides strategic guidance and alternative approaches.",
+                    "description": "Ask Orackle for insights when stuck with complex problems. Orackle is a read-only expert agent that provides strategic guidance and alternative approaches. Donot Expect it to read files , give it proper and deep context about your problem, tell them how you feel and act accordingly on its responses",
                     "parameters": {
                         "type": "object",
                         "properties": {
