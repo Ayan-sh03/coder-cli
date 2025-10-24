@@ -76,11 +76,11 @@ impl LlmClient {
 
                 let delta: Value = match serde_json::from_str(json_str) {
                     Ok(v) => v,
-                    Err(e) => {
-                        eprintln!(
-                            "Warning: Failed to parse JSON chunk: '{}'. Error: {}",
-                            json_str, e
-                        );
+                    Err(_) => {
+                        // eprintln!(
+                        //     "Warning: Failed to parse JSON chunk: '{}'. Error: {}",
+                        //     json_str, e
+                        // );
                         continue; // Skip malformed JSON and continue processing
                     }
                 };

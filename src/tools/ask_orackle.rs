@@ -48,7 +48,7 @@ pub async fn ask_orackle(query: &str) -> Result<String, String> {
     let messages = vec![system_message, user_message];
 
     // Define available tools for orackle (read-only tools)
-    let tools = serde_json::json!([
+    let _tools = serde_json::json!([
         {
             "type": "function",
             "function": {
