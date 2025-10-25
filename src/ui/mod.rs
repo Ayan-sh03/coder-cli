@@ -151,15 +151,15 @@ impl TuiApp {
     fn handle_ui_event(&mut self, event: UiEvent) {
         match event {
             UiEvent::AgentMessage(content) => {
+                // Check if we should append to existing assistant message
                 if let Some(last) = self.messages.last_mut() {
-                    if last.role == "assistant" && last.content.ends_with("...") {
-                        last.content.pop();
-                        last.content.pop();
-                        last.content.pop();
+                    if last.role == "assistant" {
                         last.content.push_str(&content);
+                        self.auto_scroll();
                         return;
                     }
                 }
+                // Otherwise create new message
                 self.messages.push(DisplayMessage {
                     role: "assistant".to_string(),
                     content: content.clone(),

@@ -103,18 +103,19 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn run_tui_with_agent(agent: Agent, mut session: Session) -> anyhow::Result<()> {
-
     // Create UI and get communication channels
     let (mut app, ui_tx) = ui::TuiApp::new();
     
-    // Load initial messages
+    // Load initial messages (skip system message for display)
     for msg in session.messages.iter() {
-        if let Some(content) = &msg.content {
-            app.messages.push(ui::DisplayMessage {
-                role: msg.role.clone(),
-                content: content.clone(),
-                timestamp: chrono::Local::now().format("%H:%M:%S").to_string(),
-            });
+        if msg.role != "system" {
+            if let Some(content) = &msg.content {
+                app.messages.push(ui::DisplayMessage {
+                    role: msg.role.clone(),
+                    content: content.clone(),
+                    timestamp: chrono::Local::now().format("%H:%M:%S").to_string(),
+                });
+            }
         }
     }
 
@@ -125,7 +126,6 @@ async fn run_tui_with_agent(agent: Agent, mut session: Session) -> anyhow::Resul
     let agent_ui_tx = ui_tx.clone();
     let agent_task = tokio::spawn(async move {
         while let Some(user_input) = input_rx.recv().await {
-            // Send to UI
             let _ = agent_ui_tx.send(ui::UiEvent::StatusUpdate("🤔 Thinking...".to_string()));
             
             // Add user message to session
@@ -136,7 +136,7 @@ async fn run_tui_with_agent(agent: Agent, mut session: Session) -> anyhow::Resul
                 tool_call_id: None,
             });
 
-            // Run agent loop
+            // Run agent loop with streaming
             match run_agent_turn_with_ui(&agent, &mut session, &agent_ui_tx).await {
                 Ok(_) => {
                     let _ = agent_ui_tx.send(ui::UiEvent::Complete);
@@ -148,13 +148,8 @@ async fn run_tui_with_agent(agent: Agent, mut session: Session) -> anyhow::Resul
         }
     });
 
-    // Run UI in foreground, sending inputs to agent
-    let ui_result = tokio::spawn(async move {
-        app.run_with_input_callback(input_tx).await
-    });
-
-    // Wait for UI to finish
-    let result = ui_result.await?;
+    // Run UI in foreground
+    let result = app.run_with_input_callback(input_tx).await;
     
     // Cleanup
     agent_task.abort();

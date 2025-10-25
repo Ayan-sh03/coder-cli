@@ -1,6 +1,5 @@
 use crate::types::{FunctionCall, Message, ToolCall};
 use serde_json::Value;
-use std::io::{self, Write};
 use tokio::time::Duration;
 
 #[derive(Clone)]
@@ -34,7 +33,6 @@ impl LlmClient {
             "messages": messages,
             "tools": tools,
             "stream":true
-            // "tool_choice": "auto", // optional, if your provider supports it
         });
 
         let resp = self
@@ -45,7 +43,6 @@ impl LlmClient {
             .send()
             .await?;
 
-        // Replace the response parsing in chat_once:
         let mut stream = resp.bytes_stream();
         let mut accumulated_message = Message {
             role: "assistant".to_string(),
@@ -62,7 +59,7 @@ impl LlmClient {
             let bytes = chunk?;
             let text = String::from_utf8_lossy(&bytes);
 
-            let mut should_stop = false; // ← add this flag
+            let mut should_stop = false;
 
             for line in text.lines() {
                 if !line.starts_with("data: ") {
@@ -70,7 +67,7 @@ impl LlmClient {
                 }
                 let json_str = line.strip_prefix("data: ").unwrap().trim();
                 if json_str == "[DONE]" || json_str == "" {
-                    should_stop = true; // ← set flag instead of break
+                    should_stop = true;
                     break;
                 }
 
@@ -81,7 +78,7 @@ impl LlmClient {
                             "Warning: Failed to parse JSON chunk: '{}'. Error: {}",
                             json_str, e
                         );
-                        continue; // Skip malformed JSON and continue processing
+                        continue;
                     }
                 };
                 let choice = &delta["choices"][0];
@@ -89,15 +86,13 @@ impl LlmClient {
 
                 if let Some(finish) = choice["finish_reason"].as_str() {
                     if finish == "stop" || finish == "tool_calls" {
-                        should_stop = true; // ← set flag
+                        should_stop = true;
                         break;
                     }
                 }
 
                 // Accumulate content
                 if let Some(content) = delta_obj["content"].as_str() {
-                    print!("{}", content);
-                    io::stdout().flush().unwrap();
                     accumulated_message
                         .content
                         .as_mut()
@@ -132,7 +127,6 @@ impl LlmClient {
             }
 
             if should_stop {
-                // ← break outer loop
                 break;
             }
         }
@@ -158,7 +152,6 @@ impl LlmClient {
             "messages": messages,
             "tools": tools,
             "stream": false
-            // "tool_choice": "auto", // optional, if your provider supports it
         });
 
         let resp = self
@@ -169,12 +162,10 @@ impl LlmClient {
             .send()
             .await?;
 
-        // Parse non-streaming response
         let response_text = resp.text().await?;
         let response_json: Value = serde_json::from_str(&response_text)
             .map_err(|e| anyhow::anyhow!("Failed to parse JSON response: {}", e))?;
 
-        // Extract the message from the response
         let choice = response_json["choices"]
             .as_array()
             .and_then(|choices| choices.first())
@@ -182,7 +173,6 @@ impl LlmClient {
 
         let message = &choice["message"];
 
-        // Parse tool calls if present
         let tool_calls = if let Some(tool_calls_array) = message["tool_calls"].as_array() {
             Some(
                 tool_calls_array

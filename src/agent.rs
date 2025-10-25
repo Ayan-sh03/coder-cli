@@ -345,6 +345,8 @@ impl Agent {
     ) -> anyhow::Result<Option<String>> {
         self.compact_history(session);
 
+        // For now, just call chat_once without streaming since async closures are complex
+        // The streaming happens in llm_client but we'll handle it differently
         let llm_step = timeout(
             self.opts.step_timeout,
             self.llm.chat_once(&session.messages, self.tools.schemas()),
