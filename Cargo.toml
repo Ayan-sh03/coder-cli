@@ -17,6 +17,8 @@ chrono = {version = "0.4.42", features = ["serde"]}
 uuid = { version = "1", features = ["v4"] }
 
 async-trait = "0.1"
+ratatui = "0.28"
+crossterm = "0.28"
 
 [dev-dependencies]
 mockall = "0.12"
