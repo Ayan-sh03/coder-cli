@@ -8,6 +8,12 @@ use serde_json::Value;
 use std::io::{self, Write};
 use tokio::time::{Duration, timeout};
 
+pub trait AgentStreamHandler: Send {
+    fn on_content_chunk(&mut self, chunk: &str);
+    fn on_tool_call(&mut self, name: &str, args: &str);
+    fn on_tool_result(&mut self, result: &str);
+}
+
 #[async_trait]
 pub trait LlmClientTrait {
     async fn chat_once(&self, messages: &[Message], tools: &Value) -> anyhow::Result<Message>;
@@ -56,6 +62,10 @@ impl Agent {
             tools,
             opts,
         }
+    }
+    
+    pub fn max_steps(&self) -> usize {
+        self.opts.max_steps
     }
 
     // Compact older messages to keep context light. We do a simple heuristic:
@@ -326,5 +336,142 @@ impl Agent {
             }
         }
         Ok(())
+    }
+
+    pub async fn run_turn_with_streaming(
+        &self,
+        session: &mut Session,
+        mut handler: Box<dyn AgentStreamHandler>,
+    ) -> anyhow::Result<Option<String>> {
+        self.compact_history(session);
+
+        let llm_step = timeout(
+            self.opts.step_timeout,
+            self.llm.chat_once(&session.messages, self.tools.schemas()),
+        )
+        .await??;
+
+        session.add_message(llm_step.clone());
+
+        if let Some(content) = &llm_step.content {
+            if !content.is_empty() {
+                handler.on_content_chunk(content);
+            }
+        }
+
+        if let Some(tcs) = &llm_step.tool_calls {
+            for tc in tcs {
+                let args: serde_json::Value = serde_json::from_str(&tc.function.arguments)
+                    .map_err(|e| anyhow::anyhow!("Parse error: {}", e))?;
+                let pretty_args = serde_json::to_string_pretty(&args).unwrap_or_default();
+                handler.on_tool_call(&tc.function.name, &pretty_args);
+            }
+        }
+
+        if llm_step.tool_calls.is_none() {
+            return Ok(llm_step.content.filter(|c| !c.trim().is_empty()));
+        }
+
+        let tool_calls = llm_step.tool_calls.unwrap();
+        let mut tasks = vec![];
+
+        for tool_call in tool_calls {
+            let name = tool_call.function.name.clone();
+            let id = tool_call.id.clone();
+            let args_raw = tool_call.function.arguments.clone();
+
+            tasks.push(tokio::spawn(async move {
+                let args: Value = serde_json::from_str(&args_raw)
+                    .map_err(|e| anyhow::anyhow!("Parse error: {}", e))?;
+
+                let obs = match name.as_str() {
+                    "list_dir" => {
+                        let path = args["path"].as_str().unwrap_or(".");
+                        crate::tools::list_dir(path).join("\n")
+                    }
+                    "read_file" => {
+                        let path = args["path"].as_str().unwrap_or("");
+                        let start = args.get("start_line").and_then(|v| v.as_u64()).map(|n| n as usize);
+                        let end = args.get("end_line").and_then(|v| v.as_u64()).map(|n| n as usize);
+                        crate::tools::read_file(path, start, end)
+                            .map_err(|e| anyhow::anyhow!("{}", e))?
+                    }
+                    "write_file" => {
+                        let path = args["path"].as_str().unwrap_or("");
+                        let content = args["content"].as_str().unwrap_or("");
+                        crate::tools::write_file(path, content)
+                            .map_err(|e| anyhow::anyhow!("{}", e))?
+                    }
+                    "run_shell" => {
+                        let cmd = args["command"].as_str().unwrap_or("");
+                        crate::tools::run_shell(cmd)
+                            .map_err(|e| anyhow::anyhow!("{}", e))?
+                    }
+                    "search_in_files" => {
+                        let path = args["path"].as_str().unwrap_or(".");
+                        let case_sensitive = args.get("case_sensitive").and_then(|v| v.as_bool());
+                        let pattern = args["pattern"].as_str().unwrap_or("");
+                        crate::tools::search_in_files(pattern, path, case_sensitive)
+                            .map_err(|e| anyhow::anyhow!("{}", e))?
+                    }
+                    "edit_file" => {
+                        let path = args["path"].as_str().unwrap_or("");
+                        let old_str = args["old_str"].as_str().unwrap_or("");
+                        let new_str = args["new_str"].as_str().unwrap_or("");
+                        crate::tools::edit_file(path, old_str, new_str)
+                            .map_err(|e| anyhow::anyhow!("{}", e))?
+                    }
+                    "insert_in_file" => {
+                        let path = args["path"].as_str().unwrap_or(".");
+                        let content = args["content"].as_str().unwrap_or("");
+                        let anchor = args["anchor"].as_str().unwrap_or("");
+                        let position = args["position"].as_str().unwrap_or("");
+                        crate::tools::insert_in_file(path, anchor, content, position)
+                            .map_err(|e| anyhow::anyhow!("{}", e))?
+                    }
+                    "ask_orackle" => {
+                        let query = args["query"].as_str().unwrap_or("");
+                        crate::tools::ask_orackle(query)
+                            .map_err(|e| anyhow::anyhow!("{}", e))?
+                    }
+                    _ => "Error: unknown tool".to_string(),
+                };
+
+                Ok::<(String, String), anyhow::Error>((id, obs))
+            }));
+        }
+
+        for t in tasks {
+            match t.await {
+                Ok(Ok((tool_call_id, observation))) => {
+                    handler.on_tool_result(&observation);
+                    let clipped = clip(&observation, self.opts.observation_clip);
+                    session.add_message(Message {
+                        role: "tool".to_string(),
+                        content: Some(clipped),
+                        tool_calls: None,
+                        tool_call_id: Some(tool_call_id),
+                    });
+                }
+                Ok(Err(e)) => {
+                    session.add_message(Message {
+                        role: "tool".to_string(),
+                        content: Some(format!("Error: {}", e)),
+                        tool_calls: None,
+                        tool_call_id: None,
+                    });
+                }
+                Err(e) => {
+                    session.add_message(Message {
+                        role: "tool".to_string(),
+                        content: Some(format!("Join error: {}", e)),
+                        tool_calls: None,
+                        tool_call_id: None,
+                    });
+                }
+            }
+        }
+
+        Ok(None)
     }
 }
