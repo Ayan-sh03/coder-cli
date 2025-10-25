@@ -11,6 +11,7 @@ mod ui;
 mod mocks;
 #[cfg(test)]
 mod tests;
+
 use agent::{Agent, AgentOptions};
 use llm_client::LlmClient;
 use session::Session;
@@ -25,23 +26,20 @@ use types::Message;
 async fn main() -> anyhow::Result<()> {
     create_agent_dir();
 
-    println!("\u{001b}[94mWelcome to the Rust ReAct agent!\u{001b}[0m");
+    println!("\u{001b}[94m🚀 Welcome to the Rust ReAct Agent!\u{001b}[0m");
 
     // Environment
     let base_url = env::var("OPENAI_BASE_URL").expect("OPENAI_BASE_URL not set");
     let api_key = env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY not set");
-    let model = env::var("OPENAI_MODEL").unwrap_or_else(|_| {
-        // Your original used "glm-4.5-air"; keep configurable
-        "glm-4.5-air".to_string()
-    });
+    let model = env::var("OPENAI_MODEL").unwrap_or_else(|_| "glm-4.5-air".to_string());
 
     let llm = LlmClient::new(base_url, api_key, model.clone())?;
     let tools = ToolRegistry::new();
     let opts = AgentOptions {
         max_steps: 12,
-        yolo: false, // set true to auto-approve tool calls
+        yolo: false,
         step_timeout: tokio::time::Duration::from_secs(45),
-        observation_clip: 4000, // keep large enough for code blocks
+        observation_clip: 4000,
     };
     let agent = Agent::with_real_client(llm, tools, opts);
 
@@ -94,58 +92,120 @@ async fn main() -> anyhow::Result<()> {
         tool_call_id: None,
     });
 
-    println!("\u{001b}[94mWelcome to the Rust ReAct agent! Launching TUI...\u{001b}[0m");
+    println!("\u{001b}[94m✨ Launching TUI...\u{001b}[0m\n");
 
-    // Start TUI session with existing system message
-    if let Err(e) = ui::run_tui_session(session.messages.clone()) {
-        eprintln!("TUI error: {}, falling back to CLI", e);
-        // Fallback to CLI if TUI fails
-        run_cli_loop(&agent, &mut session).await?;
+    // Start TUI with integrated agent loop
+    if let Err(e) = run_tui_with_agent(agent, session).await {
+        eprintln!("Error: {}", e);
     }
-
-    println!("Session ended. Session ID: {}", session.id);
-    println!("Total messages: {}", session.messages.len());
 
     Ok(())
 }
 
-async fn run_cli_loop(agent: &Agent, session: &mut Session) -> anyhow::Result<()> {
-    loop {
-        print!("\u{001b}[93mYou:\u{001b}[0m ");
-        io::stdout().flush().unwrap();
+async fn run_tui_with_agent(agent: Agent, mut session: Session) -> anyhow::Result<()> {
 
-        let mut input = String::new();
-        if io::stdin().read_line(&mut input).is_err() {
-            eprintln!("Failed to read input.");
-            continue;
-        }
-
-        let trimmed = input.trim();
-        if trimmed.eq_ignore_ascii_case("quit") {
-            println!("Goodbye!");
-            break;
-        } else if trimmed.eq_ignore_ascii_case("help") {
-            println!("Type a task. Type 'quit' to exit.");
-            continue;
-        }
-
-        print!("\u{001b}[96mAgent:\u{001b}[0m ");
-        io::stdout().flush().unwrap();
-
-        if let Err(e) = agent
-            .run_agent_loop(trimmed.to_string(), session)
-            .await
-        {
-            eprintln!("\n\u{001b}[91mError:\u{001b}[0m {}", e);
-            println!(
-                "\u{001b}[96mAgent:\u{001b}[0m An error occurred while processing your request. Please try again."
-            );
-        } else {
-            println!();
+    // Create UI and get communication channels
+    let (mut app, ui_tx) = ui::TuiApp::new();
+    
+    // Load initial messages
+    for msg in session.messages.iter() {
+        if let Some(content) = &msg.content {
+            app.messages.push(ui::DisplayMessage {
+                role: msg.role.clone(),
+                content: content.clone(),
+                timestamp: chrono::Local::now().format("%H:%M:%S").to_string(),
+            });
         }
     }
 
+    // Create channel for user inputs
+    let (input_tx, mut input_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+
+    // Clone for agent task
+    let agent_ui_tx = ui_tx.clone();
+    let agent_task = tokio::spawn(async move {
+        while let Some(user_input) = input_rx.recv().await {
+            // Send to UI
+            let _ = agent_ui_tx.send(ui::UiEvent::StatusUpdate("🤔 Thinking...".to_string()));
+            
+            // Add user message to session
+            session.add_message(Message {
+                role: "user".to_string(),
+                content: Some(user_input.clone()),
+                tool_calls: None,
+                tool_call_id: None,
+            });
+
+            // Run agent loop
+            match run_agent_turn_with_ui(&agent, &mut session, &agent_ui_tx).await {
+                Ok(_) => {
+                    let _ = agent_ui_tx.send(ui::UiEvent::Complete);
+                }
+                Err(e) => {
+                    let _ = agent_ui_tx.send(ui::UiEvent::Error(format!("{}", e)));
+                }
+            }
+        }
+    });
+
+    // Run UI in foreground, sending inputs to agent
+    let ui_result = tokio::spawn(async move {
+        app.run_with_input_callback(input_tx).await
+    });
+
+    // Wait for UI to finish
+    let result = ui_result.await?;
+    
+    // Cleanup
+    agent_task.abort();
+    
+    result
+}
+
+async fn run_agent_turn_with_ui(
+    agent: &Agent,
+    session: &mut Session,
+    ui_tx: &tokio::sync::mpsc::UnboundedSender<ui::UiEvent>,
+) -> anyhow::Result<()> {
+    
+    for step in 0..agent.max_steps() {
+        let _ = ui_tx.send(ui::UiEvent::StatusUpdate(format!("Step {}/{}", step + 1, agent.max_steps())));
+        
+        // Create a streaming handler that sends to UI
+        let handler = TuiStreamHandler {
+            ui_tx: ui_tx.clone(),
+        };
+        
+        match agent.run_turn_with_streaming(session, Box::new(handler)).await? {
+            Some(final_output) => {
+                let _ = ui_tx.send(ui::UiEvent::AgentMessage(final_output));
+                return Ok(());
+            }
+            None => {
+                // Continue to next turn
+            }
+        }
+    }
+    
     Ok(())
+}
+
+struct TuiStreamHandler {
+    ui_tx: tokio::sync::mpsc::UnboundedSender<ui::UiEvent>,
+}
+
+impl agent::AgentStreamHandler for TuiStreamHandler {
+    fn on_content_chunk(&mut self, chunk: &str) {
+        let _ = self.ui_tx.send(ui::UiEvent::AgentMessage(chunk.to_string()));
+    }
+    
+    fn on_tool_call(&mut self, name: &str, args: &str) {
+        let _ = self.ui_tx.send(ui::UiEvent::ToolCall(name.to_string(), args.to_string()));
+    }
+    
+    fn on_tool_result(&mut self, result: &str) {
+        let _ = self.ui_tx.send(ui::UiEvent::ToolResult(result.to_string()));
+    }
 }
 
 fn create_agent_dir() {
