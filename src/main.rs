@@ -5,6 +5,7 @@ mod tool_registry;
 mod tools;
 mod types;
 mod utils;
+mod ui;
 
 #[cfg(test)]
 mod mocks;
@@ -93,6 +94,22 @@ async fn main() -> anyhow::Result<()> {
         tool_call_id: None,
     });
 
+    println!("\u{001b}[94mWelcome to the Rust ReAct agent! Launching TUI...\u{001b}[0m");
+
+    // Start TUI session with existing system message
+    if let Err(e) = ui::run_tui_session(session.messages.clone()) {
+        eprintln!("TUI error: {}, falling back to CLI", e);
+        // Fallback to CLI if TUI fails
+        run_cli_loop(&agent, &mut session).await?;
+    }
+
+    println!("Session ended. Session ID: {}", session.id);
+    println!("Total messages: {}", session.messages.len());
+
+    Ok(())
+}
+
+async fn run_cli_loop(agent: &Agent, session: &mut Session) -> anyhow::Result<()> {
     loop {
         print!("\u{001b}[93mYou:\u{001b}[0m ");
         io::stdout().flush().unwrap();
@@ -106,8 +123,6 @@ async fn main() -> anyhow::Result<()> {
         let trimmed = input.trim();
         if trimmed.eq_ignore_ascii_case("quit") {
             println!("Goodbye!");
-            println!("Session ID: {}", session.id);
-            println!("Total messages: {}", session.messages.len());
             break;
         } else if trimmed.eq_ignore_ascii_case("help") {
             println!("Type a task. Type 'quit' to exit.");
@@ -118,15 +133,14 @@ async fn main() -> anyhow::Result<()> {
         io::stdout().flush().unwrap();
 
         if let Err(e) = agent
-            .run_agent_loop(trimmed.to_string(), &mut session)
+            .run_agent_loop(trimmed.to_string(), session)
             .await
         {
             eprintln!("\n\u{001b}[91mError:\u{001b}[0m {}", e);
             println!(
-                "\n\u{001b}[96mAgent:\u{001b}[0m An error occurred while processing your request. Please try again."
+                "\u{001b}[96mAgent:\u{001b}[0m An error occurred while processing your request. Please try again."
             );
         } else {
-            // Print newline to separate from next prompt
             println!();
         }
     }
