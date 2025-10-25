@@ -175,10 +175,8 @@ async fn run_agent_turn_with_ui(
         };
         
         match agent.run_turn_with_streaming(session, Box::new(handler)).await? {
-            Some(final_output) => {
-                if !final_output.trim().is_empty() {
-                    let _ = ui_tx.send(ui::UiEvent::AgentMessage(final_output));
-                }
+            Some(_final_output) => {
+                // Don't send final_output - already streamed chunk by chunk!
                 return Ok(());
             }
             None => {

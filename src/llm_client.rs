@@ -26,7 +26,15 @@ impl LlmClient {
         })
     }
 
-    pub async fn chat_once(&self, messages: &[Message], tools: &Value) -> anyhow::Result<Message> {
+    pub async fn chat_once_with_stream_callback<F>(
+        &self, 
+        messages: &[Message], 
+        tools: &Value,
+        mut on_chunk: F
+    ) -> anyhow::Result<Message> 
+    where
+        F: FnMut(&str),
+    {
         let url = format!("{}/chat/completions", self.base_url);
         let req = serde_json::json!({
             "model": self.model,
@@ -91,8 +99,9 @@ impl LlmClient {
                     }
                 }
 
-                // Accumulate content
+                // Accumulate content AND call callback for each chunk
                 if let Some(content) = delta_obj["content"].as_str() {
+                    on_chunk(content); // 🔥 Stream each chunk to UI
                     accumulated_message
                         .content
                         .as_mut()
@@ -139,6 +148,11 @@ impl LlmClient {
         }
 
         Ok(accumulated_message)
+    }
+
+    pub async fn chat_once(&self, messages: &[Message], tools: &Value) -> anyhow::Result<Message> {
+        // Call with no-op callback
+        self.chat_once_with_stream_callback(messages, tools, |_| {}).await
     }
 
     pub async fn chat_once_no_stream(

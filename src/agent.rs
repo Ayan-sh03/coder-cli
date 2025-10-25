@@ -41,27 +41,23 @@ pub struct AgentOptions {
 }
 
 pub struct Agent {
-    llm: Box<dyn LlmClientTrait + Send + Sync>,
+    llm: LlmClient,
     tools: ToolRegistry,
     opts: AgentOptions,
 }
 
 impl Agent {
     pub fn new(
-        llm: Box<dyn LlmClientTrait + Send + Sync>,
+        llm: LlmClient,
         tools: ToolRegistry,
         opts: AgentOptions,
     ) -> Self {
         Self { llm, tools, opts }
     }
 
-    // Convenience constructor for real LlmClient
+    // Convenience constructor (same as new now)
     pub fn with_real_client(llm: LlmClient, tools: ToolRegistry, opts: AgentOptions) -> Self {
-        Self {
-            llm: Box::new(llm),
-            tools,
-            opts,
-        }
+        Self::new(llm, tools, opts)
     }
     
     pub fn max_steps(&self) -> usize {
@@ -345,21 +341,20 @@ impl Agent {
     ) -> anyhow::Result<Option<String>> {
         self.compact_history(session);
 
-        // For now, just call chat_once without streaming since async closures are complex
-        // The streaming happens in llm_client but we'll handle it differently
+        // Use the LLM client with streaming callback
         let llm_step = timeout(
             self.opts.step_timeout,
-            self.llm.chat_once(&session.messages, self.tools.schemas()),
+            self.llm.chat_once_with_stream_callback(
+                &session.messages, 
+                self.tools.schemas(),
+                |chunk| handler.on_content_chunk(chunk)
+            ),
         )
         .await??;
 
         session.add_message(llm_step.clone());
 
-        if let Some(content) = &llm_step.content {
-            if !content.is_empty() {
-                handler.on_content_chunk(content);
-            }
-        }
+        // Don't send content again here - already streamed via callback!
 
         if let Some(tcs) = &llm_step.tool_calls {
             for tc in tcs {
