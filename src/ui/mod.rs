@@ -193,18 +193,15 @@ impl TuiApp {
                 self.auto_scroll();
             }
             UiEvent::StatusUpdate(status) => {
-                self.status_line = status;
+                self.status_line = status.clone();
             }
             UiEvent::Complete => {
                 self.status_line = "✓ Complete | Press 'i' to continue".to_string();
+                self.input_mode = InputMode::Normal;
             }
-            UiEvent::Input(content) => {
-                self.messages.push(DisplayMessage {
-                    role: "user".to_string(),
-                    content,
-                    timestamp: chrono::Local::now().format("%H:%M:%S").to_string(),
-                });
-                self.auto_scroll();
+            UiEvent::Input(_content) => {
+                // Don't add user message here - already added in keypress handler
+                // This event type is not used anymore but kept for compatibility
             }
         }
     }
@@ -257,12 +254,12 @@ impl TuiApp {
                         });
                         self.auto_scroll();
                         
-                        // Send to agent
+                        // Send to agent (don't send UiEvent::Input to avoid duplicate)
                         let _ = input_tx.send(input);
                         
                         self.input.clear();
                         self.input_mode = InputMode::Normal;
-                        self.status_line = "Processing...".to_string();
+                        self.status_line = "🤔 Thinking...".to_string();
                     }
                 }
                 KeyCode::Char(c) => {

@@ -164,7 +164,10 @@ async fn run_agent_turn_with_ui(
 ) -> anyhow::Result<()> {
     
     for step in 0..agent.max_steps() {
-        let _ = ui_tx.send(ui::UiEvent::StatusUpdate(format!("Step {}/{}", step + 1, agent.max_steps())));
+        let _ = ui_tx.send(ui::UiEvent::StatusUpdate(format!("🤔 Thinking... (step {}/{})", step + 1, agent.max_steps())));
+        
+        // Small delay to ensure status is visible
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
         
         // Create a streaming handler that sends to UI
         let handler = TuiStreamHandler {
@@ -173,11 +176,15 @@ async fn run_agent_turn_with_ui(
         
         match agent.run_turn_with_streaming(session, Box::new(handler)).await? {
             Some(final_output) => {
-                let _ = ui_tx.send(ui::UiEvent::AgentMessage(final_output));
+                if !final_output.trim().is_empty() {
+                    let _ = ui_tx.send(ui::UiEvent::AgentMessage(final_output));
+                }
                 return Ok(());
             }
             None => {
                 // Continue to next turn
+                let _ = ui_tx.send(ui::UiEvent::StatusUpdate(format!("🔄 Processing tools... (step {}/{})", step + 1, agent.max_steps())));
+                tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
             }
         }
     }
