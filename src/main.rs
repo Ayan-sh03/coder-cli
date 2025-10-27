@@ -26,8 +26,6 @@ use types::Message;
 async fn main() -> anyhow::Result<()> {
     create_agent_dir();
 
-    println!("\u{001b}[94mWelcome to the Rust ReAct agent!\u{001b}[0m");
-
     // ASCII Art Banner
     println!(
         r#"
@@ -53,7 +51,7 @@ async fn main() -> anyhow::Result<()> {
     let api_key = env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY not set");
     let model = env::var("OPENAI_MODEL").unwrap_or_else(|_| {
         // Your original used "glm-4.5-air"; keep configurable
-        "glm-4.5-air".to_string()
+        "glm-4.6".to_string()
     });
 
     let llm = LlmClient::new(base_url, api_key, model.clone())?;

@@ -6,6 +6,7 @@ use crate::utils::{clip, display_diff_side_by_side};
 use async_trait::async_trait;
 use serde_json::Value;
 use std::io::{self, Write};
+use std::collections::HashSet;
 use tokio::time::{Duration, timeout};
 
 #[async_trait]
@@ -124,6 +125,28 @@ impl Agent {
                             println!("\u{001b}[90m   Path: {}\u{001b}[0m", path);
                         }
                     }
+                } else if tc.function.name == "read_file" {
+                    let path = args
+                        .get("path")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("(missing path)");
+                    let start = args
+                        .get("start_line")
+                        .and_then(|v| v.as_u64())
+                        .map(|n| n.to_string());
+                    let end = args
+                        .get("end_line")
+                        .and_then(|v| v.as_u64())
+                        .map(|n| n.to_string());
+
+                    let range = match (start.as_deref(), end.as_deref()) {
+                        (Some(s), Some(e)) => format!(" (lines {}-{})", s, e),
+                        (Some(s), None) => format!(" (from line {})", s),
+                        (None, Some(e)) => format!(" (through line {})", e),
+                        (None, None) => String::new(),
+                    };
+
+                    println!("\u{001b}[90mRead File: {}{}\u{001b}[0m", path, range);
                 } else {
                     // For other tools, show pretty JSON
                     let pretty_args = serde_json::to_string_pretty(&args)
@@ -146,6 +169,23 @@ impl Agent {
 
         // Tool calls present: execute them (in parallel if independent)
         let tool_calls = llm_step.tool_calls.clone().unwrap();
+
+        // Collect files that have been requested to be read in the session so far.
+        // This lets us block writes to files that haven't been read yet.
+        let mut read_files_history: HashSet<String> = HashSet::new();
+        for m in &session.messages {
+            if let Some(calls) = &m.tool_calls {
+                for call in calls {
+                    if call.function.name == "read_file" {
+                        if let Ok(v) = serde_json::from_str::<Value>(&call.function.arguments) {
+                            if let Some(p) = v.get("path").and_then(|x| x.as_str()) {
+                                read_files_history.insert(p.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
         let mut tasks = vec![];
 
         for tool_call in tool_calls {
@@ -153,6 +193,7 @@ impl Agent {
             let id = tool_call.id.clone();
             let args_raw = tool_call.function.arguments.clone();
             let yolo = self.opts.yolo;
+            let read_files_history = read_files_history.clone();
 
             tasks.push(tokio::spawn(async move {
                 // Approval (synchronous user prompt) unless YOLO
@@ -224,9 +265,17 @@ impl Agent {
                     }
                     "write_file" => {
                         let path = args["path"].as_str().unwrap_or("");
-                        let content = args["content"].as_str().unwrap_or("");
-                        crate::tools::write_file(path, content)
-                            .unwrap_or_else(|e| format!("Error: {}", e))
+                        if !path.is_empty() && !read_files_history.contains(path) {
+                            // Enforce read-before-write policy and return feedback to the agent
+                            format!(
+                                "Policy: read the file before writing. Please call read_file on '{}' first.",
+                                path
+                            )
+                        } else {
+                            let content = args["content"].as_str().unwrap_or("");
+                            crate::tools::write_file(path, content)
+                                .unwrap_or_else(|e| format!("Error: {}", e))
+                        }
                     }
                     "run_shell" => {
                         let cmd = args["command"].as_str().unwrap_or("");
